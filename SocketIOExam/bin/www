@@ -1,0 +1,189 @@
+#!/usr/bin/env node
+
+/**
+ * Module dependencies.
+ */
+
+var app = require('../app');
+var debug = require('debug')('socketioexam:server');
+var http = require('http');
+
+/**
+ * Get port from environment and store in Express.
+ */
+
+var port = normalizePort(process.env.PORT || '3000');
+app.set('port', port);
+
+/**
+ * Create HTTP server.
+ */
+
+var server = http.createServer(app);
+
+var users = [];
+var socketio = require('socket.io');
+var io = socketio.listen(server);
+var redis = require('redis');
+var subscriber = redis.createClient();
+var publisher = redis.createClient();
+var mongoose = require('mongoose');
+mongoose.connect('mongodb://127.0.0.1:27017/chat');
+var Schema = mongoose.Schema, ObjectId = Schema.ObjectId;
+var ChatLogSchema = new Schema({
+  id:ObjectId,
+  log:String,
+  date:String
+});
+var ChatLogModel = mongoose.model('chatlog', ChatLogSchema);
+var ChatListSchema = new Schema({
+  id:ObjectId,
+  message:String
+});
+var ChatListModel = mongoose.model('chatlist', ChatListSchema);
+////////////////////////////////////////////////////////
+io.sockets.on('close', function(socket) {
+  subscriber.unsubscribe();
+  subscriber.close();
+  publisher.close();
+});
+io.sockets.on('connection', function(socket) {
+  console.log('connection!!!!');
+  socket.on('chat_conn', function(raw_msg) {
+    var msg = JSON.parse(raw_msg);
+    var index = users.indexOf(msg.chat_id);
+    if (index == -1) {//users에 존재하지 않음->로그인가능
+      users.push(msg.chat_id);
+      socket.emit('chat_join', JSON.stringify(users));
+      socket.broadcast.emit('chat_join', JSON.stringify(users));
+      //1.기존 채팅 내용을 새로 로그인 한 사용자에게 전달
+      ChatListModel.find({}, function(err, results) {
+        if (!err) socket.emit('message_list', 
+          JSON.stringify(results));
+      });
+      //2.새로운 사용자가 입장했음을 로그로 저장하고 내용을 전달
+      var chatLog = new ChatLogModel();
+      chatLog.log = msg.chat_id+'님이 접속했습니다.';
+      chatLog.date = new Date();
+      chatLog.save(function(err) {
+        if (!err) {
+          ChatLogModel.find({}, function(err, logs) {
+            socket.emit('log_list', JSON.stringify(logs));
+            socket.broadcast.emit('log_list',JSON.stringify(logs));
+          });
+        }
+      });
+    } else {//users에 존재함 --> 로그인 불가
+      socket.emit('chat_fail', 
+        JSON.stringify({chat_id:msg.chat_id}));
+    }
+  });
+  socket.on('leave',function(raw_msg) {
+    var msg = JSON.parse(raw_msg);
+    if (msg.chat_id != '' && msg.chat_id != undefined) {
+      var index = users.indexOf(msg.chat_id);
+      if (index != -1) {
+        users.splice(index, 1);
+        socket.emit('someone_leaved',
+          JSON.stringify({users:users,leaved_chat_id:msg.chat_id}));
+        socket.broadcast.emit('someone_leaved',
+          JSON.stringify({users:users,leaved_chat_id:msg.chat_id}));
+        //사용자가 퇴장한 정보를 저장하고, 모든 사용자에게 전송
+        var chatLog = new ChatLogModel();
+        chatLog.log = msg.chat_id+'님이 퇴장했습니다.';
+        chatLog.date = new Date();
+        chatLog.save(function(err) {
+          if (!err) {
+            ChatLogModel.find({}, function(err, logs) {
+              socket.emit('log_list',JSON.stringify(logs));
+              socket.broadcast.emit('log_list',
+                JSON.stringify(logs));
+            });
+          }
+        });
+      }
+    }
+  });
+  /////////////////////////////////////////////////////
+  subscriber.subscribe('chat');
+  subscriber.on('message', function(channel, message) {
+    socket.emit('message_go', message);
+  });
+  socket.on('message',function(raw_msg) {
+    var msg = JSON.parse(raw_msg);
+    var chat_message = msg.chat_id+':'+msg.message;
+    publisher.publish('chat', chat_message);
+    var chatList = new ChatListModel();
+    chatList.message = chat_message;
+    chatList.save(function(err) {});
+  });
+});
+
+
+/**
+ * Listen on provided port, on all network interfaces.
+ */
+
+server.listen(port);
+server.on('error', onError);
+server.on('listening', onListening);
+
+/**
+ * Normalize a port into a number, string, or false.
+ */
+
+function normalizePort(val) {
+  var port = parseInt(val, 10);
+
+  if (isNaN(port)) {
+    // named pipe
+    return val;
+  }
+
+  if (port >= 0) {
+    // port number
+    return port;
+  }
+
+  return false;
+}
+
+/**
+ * Event listener for HTTP server "error" event.
+ */
+
+function onError(error) {
+  if (error.syscall !== 'listen') {
+    throw error;
+  }
+
+  var bind = typeof port === 'string'
+    ? 'Pipe ' + port
+    : 'Port ' + port;
+
+  // handle specific listen errors with friendly messages
+  switch (error.code) {
+    case 'EACCES':
+      console.error(bind + ' requires elevated privileges');
+      process.exit(1);
+      break;
+    case 'EADDRINUSE':
+      console.error(bind + ' is already in use');
+      process.exit(1);
+      break;
+    default:
+      throw error;
+  }
+}
+
+/**
+ * Event listener for HTTP server "listening" event.
+ */
+
+function onListening() {
+  var addr = server.address();
+  var bind = typeof addr === 'string'
+    ? 'pipe ' + addr
+    : 'port ' + addr.port;
+  debug('Listening on ' + bind);
+}
