@@ -19,6 +19,9 @@ MongoClient.connect(url, function(err, db) {
   console.log("Connected correctly to server");
   dbObj = db;
 });
+//-------------------------------------------------
+var redis = require('redis');
+var redisClient = redis.createClient();
 /* GET users listing. */
 
 //전체 사용자 목록 조회 : GET - /users
@@ -34,39 +37,52 @@ router.get('/', function(req, res, next) {
 });
 //특정 사용자 정보 조회 : GET - /users/id
 router.get('/:id', function(req, res, next) {
-	connection.query('select id,email,name,age from user where id=?',
-		[ req.params.id ], function(err, results, fields) {
-			if (err) {
-				res.send(JSON.stringify(err));
-			} else {
-				if (results.length > 0) {
-					//Application Side Join--------------------------
-					connection.query(
-						'select * from device where user_id=?',
-						[ req.params.id ], 
-						function(err2, results2, fields2) {
-							if (err2) res.send(JSON.stringify(err2));
-							else {
-								var logs = dbObj.collection('logs');
-								logs.find({user_id:Number(req.params.id)}).
-									toArray(function(err3, results3) {
-										if (err3)
-											res.send(JSON.stringify(err3));
+	//Redis에 캐시된 데이터 유무 확인
+	//복합키 - "GET:/users/id:7" (: -> 구분자) METHOD:URL:VALUE *************************
+	redisClient.get('GET:/users/id:'+req.params.id, function(err, data) {
+		if (err) res.send(JSON.stringify(err));
+		else {
+			if (data != null) {//Redis에 저장된 데이터가 있을 경우
+				res.send(data);
+			} else {//Redis에 저장된 데이터가 없을 경우 --> 직접 쿼리 실행
+				connection.query('select id,email,name,age from user where id=?',
+					[ req.params.id ], function(err, results, fields) {
+						if (err) {
+							res.send(JSON.stringify(err));
+						} else {
+							if (results.length > 0) {
+								//Application Side Join--------------------------
+								connection.query(
+									'select * from device where user_id=?',
+									[ req.params.id ], 
+									function(err2, results2, fields2) {
+										if (err2) res.send(JSON.stringify(err2));
 										else {
-											results[0].devices = results2;
-											results[0].logs = results3;
-											res.send(JSON.stringify(results[0]));
+											var logs = dbObj.collection('logs');
+											logs.find({user_id:Number(req.params.id)}).
+												toArray(function(err3, results3) {
+													if (err3)
+														res.send(JSON.stringify(err3));
+													else {
+														results[0].devices = results2;
+														results[0].logs = results3;
+														redisClient.setex('GET:/users/id:'+req.params.id, 300,
+															JSON.stringify(results[0]));
+														res.send(JSON.stringify(results[0]));
+													}
+												});								
 										}
-									});								
+									});			
+								//-----------------------------------------------		
+							} else {
+								res.send(JSON.stringify({}));
 							}
-						});			
-					//-----------------------------------------------		
-				} else {
-					res.send(JSON.stringify({}));
-				}
+						}
+					});
+				//res.send(JSON.stringify({id:req.params.id}));
 			}
-		});
-	//res.send(JSON.stringify({id:req.params.id}));
+		}
+	});
 });
 //사용자 정보 추가 (가입) : POST - /users
 var crypto = require('crypto');
