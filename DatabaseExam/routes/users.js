@@ -22,7 +22,6 @@ MongoClient.connect(url, function(err, db) {
 //-------------------------------------------------
 var redis = require('redis');
 var redisClient = redis.createClient();
-/* GET users listing. */
 
 //전체 사용자 목록 조회 : GET - /users
 router.get('/', function(req, res, next) {
