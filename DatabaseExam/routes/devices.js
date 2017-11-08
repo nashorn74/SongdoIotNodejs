@@ -51,13 +51,17 @@ client.on('message', function (topic, message) {
 })
 
 router.post('/buzzer/:flag', function(req, res, next) {
-	if (req.params.flag == 'on') {
-		client.publish('test', '1');
-		res.send(JSON.stringify({buzzer:'on'}));
-	} else {
-		client.publish('test', '0');
-		res.send(JSON.stringify({buzzer:'off'}));
-	}
+	var commandLogs = dbObj.collection('commandLogs');
+	commandLogs.save({target:'buzzer',command:req.params.flag,created_at:new Date()},
+		function(err, result) {
+			if (req.params.flag == 'on') {
+				client.publish('test', '1');
+				res.send(JSON.stringify({buzzer:'on'}));
+			} else {
+				client.publish('test', '0');
+				res.send(JSON.stringify({buzzer:'off'}));
+			}
+		});
 });
 
 router.post('/led/:color/:flag', function(req, res, next) {
@@ -72,13 +76,18 @@ router.post('/led/:color/:flag', function(req, res, next) {
 		if (req.params.flag == 'on') flag = '6';
 		else flag = '7';
 	}
-	if (flag == '2' || flag == '4' || flag == '6') {
-		client.publish('test', '3'); 
-		client.publish('test', '5'); 
-		client.publish('test', '7');
-	}
-	client.publish('test', flag);
-	res.send(JSON.stringify({color:req.params.color,led:req.params.flag}));
+	var commandLogs = dbObj.collection('commandLogs');
+	commandLogs.save({target:'led',color:req.params.color,
+		command:req.params.flag,created_at:new Date()},
+		function(err, result) {
+		if (flag == '2' || flag == '4' || flag == '6') {
+			client.publish('test', '3'); 
+			client.publish('test', '5'); 
+			client.publish('test', '7');
+		}
+		client.publish('test', flag);
+		res.send(JSON.stringify({color:req.params.color,led:req.params.flag}));
+	});
 });
 
 router.get('/:device/:sensor', function(req, res, next) {
