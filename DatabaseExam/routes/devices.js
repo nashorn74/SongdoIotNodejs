@@ -25,12 +25,13 @@ var client  = mqtt.connect('mqtt://192.168.0.35');
 client.on('connect', function () {
   client.subscribe('test')
   client.subscribe('arduino')
+  client.subscribe('mq2')
   client.publish('test', 'Hello mqtt')
 })
  
 client.on('message', function (topic, message) {
   // message is Buffer
-  console.log(topic+":"+message.toString())
+  //console.log(topic+":"+message.toString())
   if (topic == 'arduino') {
   	var dht11Logs = dbObj.collection('dht11Logs');
   	var json = JSON.parse(message.toString());
@@ -38,6 +39,13 @@ client.on('message', function (topic, message) {
   	json.sensor = 'dht11';
   	json.created_at = new Date();
   	dht11Logs.save(json, function(err, result) {});
+  } else if (topic == 'mq2') {
+  	var mq2Logs = dbObj.collection('mq2Logs');
+  	var json = JSON.parse(message.toString());
+  	json.device = 'arduino';
+  	json.sensor = 'mq2';
+  	json.created_at = new Date();
+  	mq2Logs.save(json, function(err, result) {});
   }
   //client.end()
 })
@@ -52,10 +60,35 @@ router.post('/buzzer/:flag', function(req, res, next) {
 	}
 });
 
+router.post('/led/:color/:flag', function(req, res, next) {
+	var flag = '';
+	if (req.params.color == 'red') {
+		if (req.params.flag == 'on') flag = '2';
+		else flag = '3';
+	} else if (req.params.color == 'yellow') {
+		if (req.params.flag == 'on') flag = '4';
+		else flag = '5';
+	} else {
+		if (req.params.flag == 'on') flag = '6';
+		else flag = '7';
+	}
+	if (flag == '2' || flag == '4' || flag == '6') {
+		client.publish('test', '3'); 
+		client.publish('test', '5'); 
+		client.publish('test', '7');
+	}
+	client.publish('test', flag);
+	res.send(JSON.stringify({color:req.params.color,led:req.params.flag}));
+});
+
 router.get('/:device/:sensor', function(req, res, next) {
-	var dht11Logs = dbObj.collection('dht11Logs');
-	dht11Logs.find({device:req.params.device,sensor:req.params.sensor}).
-		toArray(function(err, results) {
+	var sensorLogs = null;
+	if (req.params.sensor == 'dht11')
+		sensorLogs = dbObj.collection('dht11Logs');
+	else 
+		sensorLogs = dbObj.collection('mq2Logs');
+	sensorLogs.find({device:req.params.device,sensor:req.params.sensor}).
+		limit(100).sort({created_at:-1}).toArray(function(err, results) {
 			if (err) res.send(JSON.stringify(err));
 			else res.send(JSON.stringify(results));
 		});
